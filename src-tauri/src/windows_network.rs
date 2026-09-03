@@ -75,6 +75,10 @@ Write-Output 'SWITCHCAT_NETWORK_OK'"#,
     Err(localized_error(&detail))
 }
 
+pub fn route_configured(profile: &Profile, proxy: bool) -> bool {
+    target_for(profile, proxy).is_ok()
+}
+
 fn target_for(profile: &Profile, proxy: bool) -> Result<NetworkTarget, String> {
     let (gateway, dns) = if proxy {
         let gateway = value_or(&profile.device.proxy_gateway, &profile.openwrt.host);

@@ -187,6 +187,18 @@ function selectionNodeId(selection?: RouteSelection): string | null {
   return null;
 }
 
+function isIpv4(value: string): boolean {
+  const parts = value.trim().split(".");
+  return parts.length === 4 && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
+}
+
+function windowsNetworkReady(profile: Profile, proxy: boolean): boolean {
+  if (bootstrap.platform !== "windows") return true;
+  const gateway = (proxy ? profile.device.proxy_gateway || profile.openwrt.host : profile.device.direct_gateway).trim();
+  const dns = (proxy ? profile.device.proxy_dns : profile.device.direct_dns).trim() || gateway;
+  return isIpv4(gateway) && isIpv4(dns);
+}
+
 function render(): void {
   const profile = draft.profiles[selectedProfileId];
   if (!profile) {
@@ -295,23 +307,14 @@ function profileEditor(profileId: string, profile: Profile, isActive: boolean): 
       ${field("ACL 备注（可选兜底）", "profile.device.acl_remarks", profile.device.acl_remarks, "例如 Windows / macbook")}
     </div>
 
-    <div class="callout info">
-      <strong>网络前提</strong>
-      <span>${bootstrap.platform === "windows" ? `Windows 选择代理时会把网关和 DNS 切到 <code>${h(profile.device.proxy_gateway || profile.openwrt.host)}</code>，选择本地直连时切回 <code>${h(profile.device.direct_gateway || "未配置")}</code>；需要以管理员身份运行。` : `本机网关和 DNS 应固定指向 <code>${h(profile.openwrt.host)}</code>，线路切换由 PassWall2 ACL 完成。`}</span>
-    </div>
+    ${bootstrap.platform === "windows" ? windowsNetworkPanel(profile) : `<div class="callout info"><strong>网络前提</strong><span>本机网关和 DNS 应固定指向 <code>${h(profile.openwrt.host)}</code>，线路切换由 PassWall2 ACL 完成。</span></div>`}
 
     <details class="advanced">
-      <summary>环境自动识别与网络切换</summary>
+      <summary>环境自动识别</summary>
       <div class="form-grid two detail-fields">
         ${textareaField("Wi-Fi SSID（每行一个）", "profile.detect.ssids", profile.detect.ssids.join("\n"), "HomeWiFi\nOfficeWiFi")}
         ${textareaField("本地网段 CIDR（每行一个）", "profile.detect.local_cidrs", profile.detect.local_cidrs.join("\n"), "例如：192.0.2.0/24（请替换）")}
         ${textareaField("默认网关（每行一个）", "profile.detect.gateways", profile.detect.gateways.join("\n"), "此环境实际网关")}
-        <div class="mini-grid">
-          ${field("本地路由器", "profile.device.direct_gateway", profile.device.direct_gateway, "本地直连时应用")}
-          ${field("OpenWrt 网关", "profile.device.proxy_gateway", profile.device.proxy_gateway, "代理时应用，留空使用 OpenWrt 地址")}
-          ${field("本地 DNS", "profile.device.direct_dns", profile.device.direct_dns, "留空使用本地路由器")}
-          ${field("OpenWrt DNS", "profile.device.proxy_dns", profile.device.proxy_dns, "留空使用 OpenWrt 网关")}
-        </div>
       </div>
     </details>
 
@@ -325,8 +328,30 @@ function profileEditor(profileId: string, profile: Profile, isActive: boolean): 
   </section>`;
 }
 
+function windowsNetworkPanel(profile: Profile): string {
+  const directReady = windowsNetworkReady(profile, false);
+  const proxyReady = windowsNetworkReady(profile, true);
+  const complete = directReady && proxyReady;
+  return `<section class="network-config ${complete ? "complete" : "incomplete"}">
+    <div class="network-config-heading">
+      <div><span class="kicker">Windows 网络切换</span><strong>本地与代理网关</strong></div>
+      <span class="status-chip ${complete ? "success" : "warning"}">${complete ? "✓ 配置完整" : "需要填写"}</span>
+    </div>
+    ${!complete ? `<div class="network-warning">${!directReady ? "请填写有效的本地网关和本地 DNS。" : ""}${!proxyReady ? "请填写有效的 OpenWrt 网关和 DNS。" : ""}保存后才能执行对应线路切换。</div>` : ""}
+    <div class="form-grid two">
+      ${field("本地网关 *", "profile.device.direct_gateway", profile.device.direct_gateway, "例如：192.168.1.1")}
+      ${field("本地 DNS", "profile.device.direct_dns", profile.device.direct_dns, "留空时使用本地网关")}
+      ${field("代理网关 *", "profile.device.proxy_gateway", profile.device.proxy_gateway, `留空时使用 ${profile.openwrt.host || "OpenWrt 地址"}`)}
+      ${field("代理 DNS", "profile.device.proxy_dns", profile.device.proxy_dns, "留空时使用代理网关")}
+    </div>
+    <p>代理线路使用代理网关/DNS；本地直连使用本地网关/DNS。本机固定 IPv4 不会变化。</p>
+  </section>`;
+}
+
 function routePanel(activeId: string, profile: Profile, runtime?: ProfileRuntime): string {
   const routeReady = profile.enabled && profile.ssh_verified;
+  const directNetworkReady = windowsNetworkReady(profile, false);
+  const proxyNetworkReady = windowsNetworkReady(profile, true);
   const inventory = routeReady ? runtime?.inventory : undefined;
   const currentNode = selectionNodeId(inventory?.selection);
   return `<section class="panel route-panel">
@@ -334,14 +359,14 @@ function routePanel(activeId: string, profile: Profile, runtime?: ProfileRuntime
       <div><span class="kicker">托盘菜单预览</span><h2>${h(profile.name)} 的线路</h2></div>
       <span class="refresh-time">${h(formatTime(runtime?.last_refreshed_unix ?? null))}</span>
     </div>
-    ${!profile.enabled ? '<div class="callout info"><strong>环境未启用</strong><span>启用并保存此环境后，才能验证 SSH 和切换线路。</span></div>' : !profile.ssh_verified ? `<div class="callout info"><strong>等待 SSH 验证</strong><span>完成免密配置并点击“测试并启用 SSH”后，才会读取节点和开放线路切换。</span></div>` : runtime?.last_error ? `<div class="callout error"><strong>读取失败</strong><span>${h(runtime.last_error)}</span><button class="text-button" data-action="ssh-guide" data-profile-id="${h(activeId)}">查看 SSH 配置</button></div>` : ""}
+    ${!profile.enabled ? '<div class="callout info"><strong>环境未启用</strong><span>启用并保存此环境后，才能验证 SSH 和切换线路。</span></div>' : !profile.ssh_verified ? `<div class="callout info"><strong>等待 SSH 验证</strong><span>完成免密配置并点击“测试并启用 SSH”后，才会读取节点和开放线路切换。</span></div>` : !directNetworkReady || !proxyNetworkReady ? '<div class="callout warning"><strong>网络参数未完成</strong><span>请在上方“Windows 网络切换”中填写对应网关和 DNS，然后保存配置。</span></div>' : runtime?.last_error ? `<div class="callout error"><strong>读取失败</strong><span>${h(runtime.last_error)}</span><button class="text-button" data-action="ssh-guide" data-profile-id="${h(activeId)}">查看 SSH 配置</button></div>` : ""}
     <div class="route-list">
-      <button class="route-item ${inventory?.selection.kind === "direct" ? "active" : ""}" data-action="switch-direct" ${disabled(!routeReady || !inventory || Boolean(runtime?.busy) || Boolean(busyAction) || dirty)}>
+      <button class="route-item ${inventory?.selection.kind === "direct" ? "active" : ""}" data-action="switch-direct" ${disabled(!routeReady || !directNetworkReady || !inventory || Boolean(runtime?.busy) || Boolean(busyAction) || dirty)}>
         <span class="route-icon direct">⌂</span><span><strong>本地直连</strong><small>PassWall2 ACL · No Proxy</small></span>${inventory?.selection.kind === "direct" ? "<b>✓</b>" : ""}
       </button>
       ${(inventory?.nodes ?? [])
         .map(
-          (node) => `<button class="route-item ${currentNode === node.id ? "active" : ""}" data-action="switch-node" data-node-id="${h(node.id)}" ${disabled(!routeReady || Boolean(runtime?.busy) || Boolean(busyAction) || dirty)}>
+          (node) => `<button class="route-item ${currentNode === node.id ? "active" : ""}" data-action="switch-node" data-node-id="${h(node.id)}" ${disabled(!routeReady || !proxyNetworkReady || Boolean(runtime?.busy) || Boolean(busyAction) || dirty)}>
             <span class="route-icon proxy">↗</span><span><strong>${h(node.name)}</strong><small>${h(nodeMeta(node))}</small></span>${currentNode === node.id ? "<b>✓</b>" : ""}
           </button>`,
         )

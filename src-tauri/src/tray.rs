@@ -98,6 +98,16 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let active_runtime = runtime.get(&active_id);
     let profile_ready = active_profile
         .is_some_and(|profile| profile.enabled && profile.ssh_verified);
+    #[cfg(target_os = "windows")]
+    let direct_network_ready = active_profile
+        .is_some_and(|profile| crate::windows_network::route_configured(profile, false));
+    #[cfg(not(target_os = "windows"))]
+    let direct_network_ready = true;
+    #[cfg(target_os = "windows")]
+    let proxy_network_ready = active_profile
+        .is_some_and(|profile| crate::windows_network::route_configured(profile, true));
+    #[cfg(not(target_os = "windows"))]
+    let proxy_network_ready = true;
     let active_inventory = profile_ready
         .then(|| active_runtime.and_then(|runtime| runtime.inventory.as_ref()))
         .flatten();
@@ -138,7 +148,12 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 
     let direct_item = CheckMenuItemBuilder::with_id("route:direct", "本地直连")
         .checked(matches!(&selection, RouteSelection::Direct))
-        .enabled(profile_ready && active_inventory.is_some() && !profile_busy)
+        .enabled(
+            profile_ready
+                && direct_network_ready
+                && active_inventory.is_some()
+                && !profile_busy,
+        )
         .build(app)?;
 
     let mut menu = MenuBuilder::new(app)
@@ -154,7 +169,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                 node.menu_label(),
             )
             .checked(selection.is_node(&node.id))
-            .enabled(profile_ready && !profile_busy)
+            .enabled(profile_ready && proxy_network_ready && !profile_busy)
             .build(app)?;
             menu = menu.item(&item);
         }

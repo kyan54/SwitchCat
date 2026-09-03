@@ -1,6 +1,6 @@
 [package]
 name = "switchcat"
-version = "0.1.4"
+version = "0.1.5"
 description = "A tiny cross-platform OpenWrt PassWall2 tray switcher"
 authors = ["kyan54"]
 edition = "2021"

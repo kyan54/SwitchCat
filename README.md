@@ -21,6 +21,8 @@ SwitchCat 不在电脑上启动代理内核，也不保存 OpenWrt 密码。它�
 
 Windows 版还会同步修改拥有 `client_ip` 的网卡：选择代理时使用 `proxy_gateway/proxy_dns` 并关闭该网卡 IPv6；选择本地直连时使用 `direct_gateway/direct_dns` 并恢复 IPv6。Windows 版因此需要以管理员身份运行，本机固定 IPv4 保持不变。
 
+四项参数显示在每个环境主配置中的“Windows 网络切换”区域。DNS 可留空并自动使用同组网关；本地网关必须明确填写，缺少参数时对应线路按钮会保持禁用。
+
 macOS/Linux 当前只切换 ACL，建议网关和 DNS 始终指向 OpenWrt。若使用过 v2rayN、Clash 等其他代理软件，请先关闭其系统代理/PAC，避免形成两层代理。
 
 ## 安装
