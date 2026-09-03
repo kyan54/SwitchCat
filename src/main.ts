@@ -38,6 +38,7 @@ interface DetectSettings {
 interface Profile {
   name: string;
   enabled: boolean;
+  ssh_verified: boolean;
   openwrt: OpenWrtSettings;
   device: DeviceSettings;
   detect: DetectSettings;
@@ -195,7 +196,8 @@ function render(): void {
   const activeId = draft.app.active_profile;
   const activeProfile = draft.profiles[activeId];
   const runtime = bootstrap.runtime[activeId];
-  const inventory = runtime?.inventory;
+  const activeReady = Boolean(activeProfile?.enabled && activeProfile?.ssh_verified);
+  const inventory = activeReady ? runtime?.inventory : undefined;
   const selection = inventory?.selection;
   const isActiveSelection = selectedProfileId === activeId;
 
@@ -214,7 +216,11 @@ function render(): void {
           ${Object.entries(draft.profiles)
             .map(([id, item]) => {
               const itemRuntime = bootstrap.runtime[id];
-              const itemRoute = routeName(itemRuntime?.inventory?.selection);
+              const itemRoute = !item.enabled
+                ? "环境未启用"
+                : !item.ssh_verified
+                  ? "等待 SSH 验证"
+                  : routeName(itemRuntime?.inventory?.selection);
               return `<button class="profile-item ${id === selectedProfileId ? "selected" : ""}" data-action="select-profile" data-profile-id="${h(id)}">
                 <span class="profile-dot ${itemRuntime?.last_error ? "error" : itemRuntime?.inventory ? "online" : ""}"></span>
                 <span class="profile-copy"><strong>${h(item.name)}</strong><small>${h(itemRoute)}</small></span>
@@ -235,10 +241,10 @@ function render(): void {
         <header class="topbar">
           <div>
             <div class="eyebrow">当前环境 · ${h(activeProfile?.name || "未配置")}</div>
-            <h1>${h(routeName(selection))}</h1>
+            <h1>${h(!activeProfile?.enabled ? "环境未启用" : !activeProfile?.ssh_verified ? "等待 SSH 验证" : routeName(selection))}</h1>
           </div>
           <div class="topbar-actions">
-            <button class="secondary" data-action="refresh" ${disabled(!activeProfile || Boolean(runtime?.busy))}>
+            <button class="secondary" data-action="refresh" ${disabled(!activeReady || Boolean(runtime?.busy))}>
               ${runtime?.busy ? '<span class="spinner"></span> 正在读取' : "↻ 刷新节点"}
             </button>
             <button class="primary" data-action="save" ${disabled(!dirty || Boolean(busyAction))}>${dirty ? "保存配置" : "已保存"}</button>
@@ -273,7 +279,7 @@ function profileEditor(profileId: string, profile: Profile, isActive: boolean): 
     <div class="panel-heading">
       <div><span class="kicker">环境配置</span><h2>${h(profile.name)}</h2></div>
       <div class="heading-actions">
-        ${isActive ? '<span class="status-chip success">✓ 当前环境</span>' : `<button class="secondary compact" data-action="activate" data-profile-id="${h(profileId)}">切换到此环境</button>`}
+        ${isActive ? '<span class="status-chip success">✓ 当前环境</span>' : `<button class="secondary compact" data-action="activate" data-profile-id="${h(profileId)}" ${disabled(!profile.enabled || !profile.ssh_verified || dirty)}>切换到此环境</button>`}
         ${Object.keys(draft.profiles).length > 1 ? `<button class="danger-link" data-action="delete-profile" data-profile-id="${h(profileId)}">删除</button>` : ""}
       </div>
     </div>
@@ -310,36 +316,37 @@ function profileEditor(profileId: string, profile: Profile, isActive: boolean): 
     </details>
 
     <div class="panel-footer">
-      <label class="switch-label"><input type="checkbox" data-field="profile.enabled" ${checked(profile.enabled)}><span class="switch"></span>启用此环境</label>
+      <div><label class="switch-label"><input type="checkbox" data-field="profile.enabled" ${checked(profile.enabled)}><span class="switch"></span>启用此环境</label><span class="status-chip ${profile.ssh_verified ? "success" : "warning"}">${profile.ssh_verified ? "✓ SSH 已验证" : "SSH 未验证"}</span></div>
       <div>
         <button class="secondary" data-action="ssh-guide" data-profile-id="${h(profileId)}">SSH 免密引导</button>
-        <button class="secondary" data-action="check-ssh" data-profile-id="${h(profileId)}" ${disabled(Boolean(busyAction))}>测试 SSH</button>
+        <button class="secondary" data-action="check-ssh" data-profile-id="${h(profileId)}" ${disabled(!profile.enabled || Boolean(busyAction))}>${profile.ssh_verified ? "重新验证 SSH" : "测试并启用 SSH"}</button>
       </div>
     </div>
   </section>`;
 }
 
 function routePanel(activeId: string, profile: Profile, runtime?: ProfileRuntime): string {
-  const inventory = runtime?.inventory;
+  const routeReady = profile.enabled && profile.ssh_verified;
+  const inventory = routeReady ? runtime?.inventory : undefined;
   const currentNode = selectionNodeId(inventory?.selection);
   return `<section class="panel route-panel">
     <div class="panel-heading">
       <div><span class="kicker">托盘菜单预览</span><h2>${h(profile.name)} 的线路</h2></div>
       <span class="refresh-time">${h(formatTime(runtime?.last_refreshed_unix ?? null))}</span>
     </div>
-    ${runtime?.last_error ? `<div class="callout error"><strong>读取失败</strong><span>${h(runtime.last_error)}</span><button class="text-button" data-action="ssh-guide" data-profile-id="${h(activeId)}">查看 SSH 配置</button></div>` : ""}
+    ${!profile.enabled ? '<div class="callout info"><strong>环境未启用</strong><span>启用并保存此环境后，才能验证 SSH 和切换线路。</span></div>' : !profile.ssh_verified ? `<div class="callout info"><strong>等待 SSH 验证</strong><span>完成免密配置并点击“测试并启用 SSH”后，才会读取节点和开放线路切换。</span></div>` : runtime?.last_error ? `<div class="callout error"><strong>读取失败</strong><span>${h(runtime.last_error)}</span><button class="text-button" data-action="ssh-guide" data-profile-id="${h(activeId)}">查看 SSH 配置</button></div>` : ""}
     <div class="route-list">
-      <button class="route-item ${inventory?.selection.kind === "direct" ? "active" : ""}" data-action="switch-direct" ${disabled(!inventory || Boolean(runtime?.busy) || Boolean(busyAction) || dirty)}>
+      <button class="route-item ${inventory?.selection.kind === "direct" ? "active" : ""}" data-action="switch-direct" ${disabled(!routeReady || !inventory || Boolean(runtime?.busy) || Boolean(busyAction) || dirty)}>
         <span class="route-icon direct">⌂</span><span><strong>本地直连</strong><small>PassWall2 ACL · No Proxy</small></span>${inventory?.selection.kind === "direct" ? "<b>✓</b>" : ""}
       </button>
       ${(inventory?.nodes ?? [])
         .map(
-          (node) => `<button class="route-item ${currentNode === node.id ? "active" : ""}" data-action="switch-node" data-node-id="${h(node.id)}" ${disabled(Boolean(runtime?.busy) || Boolean(busyAction) || dirty)}>
+          (node) => `<button class="route-item ${currentNode === node.id ? "active" : ""}" data-action="switch-node" data-node-id="${h(node.id)}" ${disabled(!routeReady || Boolean(runtime?.busy) || Boolean(busyAction) || dirty)}>
             <span class="route-icon proxy">↗</span><span><strong>${h(node.name)}</strong><small>${h(nodeMeta(node))}</small></span>${currentNode === node.id ? "<b>✓</b>" : ""}
           </button>`,
         )
         .join("")}
-      ${!inventory && !runtime?.last_error ? '<div class="route-empty"><span class="spinner dark"></span> 正在等待首次读取…</div>' : ""}
+      ${!routeReady ? '<div class="route-empty">线路切换尚未启用</div>' : !inventory && !runtime?.last_error ? '<div class="route-empty"><span class="spinner dark"></span> 正在等待首次读取…</div>' : ""}
       ${inventory && inventory.nodes.length === 0 ? '<div class="route-empty">OpenWrt 中没有可用的 PassWall2 节点</div>' : ""}
     </div>
   </section>`;
@@ -423,14 +430,13 @@ async function saveConfig(showGuideAfter = false): Promise<void> {
   busyAction = "save";
   updateSaveButton();
   try {
+    const shouldShowGuide = firstRun || showGuideAfter;
+    const profileId = selectedProfileId;
     await invoke("save_config", { config: draft });
-    bootstrap.config = clone(draft);
-    dirty = false;
+    await loadBootstrap();
     toast("配置已保存", "success");
-    if (firstRun || showGuideAfter) {
-      firstRun = false;
-      bootstrap.config_exists = true;
-      await showSshGuide(selectedProfileId);
+    if (shouldShowGuide) {
+      await showSshGuide(profileId);
     }
   } catch (error) {
     toast(errorText(error), "error", 6500);
@@ -507,6 +513,7 @@ async function checkSsh(profileId: string): Promise<void> {
   render();
   try {
     const status = await invoke<SshStatus>("check_ssh", { profileId });
+    await loadBootstrap();
     toast(status.message, status.ok ? "success" : "error", 6500);
     if (status.ok) {
       modalRoot.innerHTML = "";
@@ -530,6 +537,7 @@ function addProfile(): void {
   draft.profiles[id] = {
     name: id === "office" ? "公司" : `环境 ${index}`,
     enabled: true,
+    ssh_verified: false,
     openwrt: {
       host: "",
       port: 22,

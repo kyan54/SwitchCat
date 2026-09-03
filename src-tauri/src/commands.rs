@@ -41,16 +41,7 @@ pub async fn save_config(app: AppHandle, config: AppConfig) -> Result<(), String
 
 #[tauri::command]
 pub async fn check_ssh(app: AppHandle, profile_id: String) -> Result<SshStatus, String> {
-    run_blocking(move || {
-        let state = app.state::<AppState>();
-        let profile = state.profile(&profile_id)?;
-        Ok(openwrt::check_ssh(
-            &profile_id,
-            &profile,
-            &state.config_dir,
-        ))
-    })
-    .await
+    run_blocking(move || actions::check_ssh(&app, &profile_id)).await
 }
 
 #[tauri::command]

@@ -9,6 +9,7 @@
 - 节点由 SSH 实时读取，OpenWrt 增删或改名后自动同步
 - 支持多个环境，例如“家里”和“公司”，每个环境使用各自的 OpenWrt、客户端 IP、ACL 和 SSH 主机指纹
 - 可按 Wi-Fi SSID、默认网关或本地 CIDR 自动识别环境
+- 保存配置后仍不会自动连接；每个环境必须手动完成一次“测试并启用 SSH”
 
 ## 工作方式
 
@@ -51,7 +52,9 @@ SwitchCat 优先按 `client_ip` 精确匹配 ACL；`acl_remarks` 只作为可选
 2. 保存 `config.toml`。
 3. SwitchCat 会自动弹出当前平台的 SSH 免密引导。
 4. 按顺序复制三段命令：生成密钥、安装公钥、验证连接。
-5. 点击“测试 SSH”，成功后即可读取全部节点。
+5. 点击“测试并启用 SSH”，成功后才会读取全部节点，并启动该环境的定时同步。
+
+在 SSH 验证成功之前，该环境的“本地直连”、代理节点、刷新和环境切换均不可操作。修改 OpenWrt 地址、SSH 用户/端口、私钥路径、本机 IP 或 ACL 备注后，验证状态会自动失效，需要重新测试；这可以避免程序在配置尚未完成时连接错误的设备。
 
 SwitchCat 为每个环境维护独立的 `known_hosts` 文件。若路由器主机指纹发生变化，连接会被拒绝；请先确认路由器确实被重装或更换，再删除对应环境的指纹文件并重新确认。
 
@@ -106,7 +109,7 @@ ssh -p 22 -i "$KEY" -o BatchMode=yes root@192.0.2.3 'echo SSH_OK'
 | 自动识别 SSID | `HomeWiFi` | `OfficeWiFi` |
 | 自动识别 CIDR | `192.0.2.0/24` | `198.51.100.0/24` |
 
-托盘的“切换环境”子菜单可手动选择。自动识别只有在某个环境获得唯一最高分时才切换；切换前还会先验证该 OpenWrt 可连接。
+托盘的“切换环境”子菜单可手动选择。只有已启用并完成 SSH 验证的环境可以切换；自动识别也只考虑这些环境，并会在切换前再次确认 OpenWrt 可连接。
 
 完整格式见 [`config.example.toml`](config.example.toml)。实际位置可以从设置页查看：
 
@@ -139,12 +142,7 @@ cargo test
 
 ## 自动发布
 
-`.github/workflows/build.yml` 会在提交和 Pull Request 时构建 Windows、Linux、macOS Intel、macOS Apple Silicon。推送 `v*` 标签时会创建 GitHub Release 并上传安装包：
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
+`.github/workflows/build.yml` 会在提交和 Pull Request 时构建 Windows、Linux、macOS Intel、macOS Apple Silicon。合并到 `main` 后，工作流会读取应用版本并自动创建对应的 `v*` GitHub Release，同时上传全部安装包；同一版本已发布时不会重复创建。
 
 ## 安全说明
 

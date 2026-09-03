@@ -96,15 +96,24 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let active_id = config.app.active_profile.clone();
     let active_profile = config.profiles.get(&active_id);
     let active_runtime = runtime.get(&active_id);
+    let profile_ready = active_profile
+        .is_some_and(|profile| profile.enabled && profile.ssh_verified);
+    let active_inventory = profile_ready
+        .then(|| active_runtime.and_then(|runtime| runtime.inventory.as_ref()))
+        .flatten();
+    let profile_busy = active_runtime.is_some_and(|runtime| runtime.busy);
     let active_name = active_profile
         .map(|profile| profile.name.as_str())
         .unwrap_or("未配置");
 
-    let selection = active_runtime
-        .and_then(|runtime| runtime.inventory.as_ref())
+    let selection = active_inventory
         .map(|inventory| inventory.selection.clone())
         .unwrap_or(RouteSelection::Unknown);
-    let status_text = if active_runtime.is_some_and(|runtime| runtime.busy) {
+    let status_text = if active_profile.is_some_and(|profile| !profile.enabled) {
+        format!("🐱 {active_name} · 环境未启用")
+    } else if active_profile.is_some_and(|profile| !profile.ssh_verified) {
+        format!("🐱 {active_name} · 等待 SSH 验证")
+    } else if profile_busy {
         format!("🐾 {active_name} · 正在处理…")
     } else {
         format!("🐱 {active_name} · {}", selection.description())
@@ -120,6 +129,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             profile.name.clone(),
         )
         .checked(profile_id == &active_id)
+        .enabled(profile.enabled && profile.ssh_verified)
         .build(app)?;
         environment_menu = environment_menu.item(&item);
     }
@@ -128,7 +138,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 
     let direct_item = CheckMenuItemBuilder::with_id("route:direct", "本地直连")
         .checked(matches!(&selection, RouteSelection::Direct))
-        .enabled(active_profile.is_some() && !active_runtime.is_some_and(|runtime| runtime.busy))
+        .enabled(profile_ready && active_inventory.is_some() && !profile_busy)
         .build(app)?;
 
     let mut menu = MenuBuilder::new(app)
@@ -137,19 +147,21 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .separator()
         .item(&direct_item);
 
-    if let Some(inventory) = active_runtime.and_then(|runtime| runtime.inventory.as_ref()) {
+    if let Some(inventory) = active_inventory {
         for (index, node) in inventory.nodes.iter().enumerate() {
             let item = CheckMenuItemBuilder::with_id(
                 format!("route:node:{index}"),
                 node.menu_label(),
             )
             .checked(selection.is_node(&node.id))
-            .enabled(!active_runtime.is_some_and(|runtime| runtime.busy))
+            .enabled(profile_ready && !profile_busy)
             .build(app)?;
             menu = menu.item(&item);
         }
     } else {
-        let loading_text = if active_runtime.and_then(|runtime| runtime.last_error.as_ref()).is_some() {
+        let loading_text = if !profile_ready {
+            "请先保存配置并完成 SSH 验证"
+        } else if active_runtime.and_then(|runtime| runtime.last_error.as_ref()).is_some() {
             "节点读取失败，请查看设置"
         } else {
             "正在读取 OpenWrt 节点…"
@@ -171,9 +183,12 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let autostart_item = CheckMenuItemBuilder::with_id("toggle-autostart", "开机启动")
         .checked(config.app.start_at_login)
         .build(app)?;
+    let refresh_item = MenuItemBuilder::with_id("refresh", "刷新节点")
+        .enabled(profile_ready && !profile_busy)
+        .build(app)?;
 
     menu.separator()
-        .text("refresh", "刷新节点")
+        .item(&refresh_item)
         .text("settings", "设置…")
         .text("open-config", "打开配置目录")
         .item(&autostart_item)
@@ -193,11 +208,18 @@ fn tooltip(app: &AppHandle) -> String {
         .get(&config.app.active_profile)
         .map(|profile| profile.name.as_str())
         .unwrap_or("未配置");
-    let route = runtime
-        .get(&config.app.active_profile)
-        .and_then(|runtime| runtime.inventory.as_ref())
-        .map(|inventory| inventory.selection.description())
-        .unwrap_or_else(|| "状态未知".to_string());
+    let active_profile = config.profiles.get(&config.app.active_profile);
+    let route = if active_profile.is_some_and(|profile| !profile.enabled) {
+        "环境未启用".to_string()
+    } else if active_profile.is_some_and(|profile| !profile.ssh_verified) {
+        "等待 SSH 验证".to_string()
+    } else {
+        runtime
+            .get(&config.app.active_profile)
+            .and_then(|runtime| runtime.inventory.as_ref())
+            .map(|inventory| inventory.selection.description())
+            .unwrap_or_else(|| "状态未知".to_string())
+    };
     format!("SwitchCat · {profile_name} · {route}")
 }
 

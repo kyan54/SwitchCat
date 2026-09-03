@@ -12,6 +12,8 @@ menu_on_left_click = true
 [profiles.home]
 name = "家里"
 enabled = true
+# 由 SwitchCat 在“测试并启用 SSH”成功后维护，请勿手动改为 true。
+ssh_verified = false
 
 [profiles.home.openwrt]
 host = "192.0.2.3"
@@ -36,6 +38,7 @@ local_cidrs = ["192.0.2.0/24"]
 [profiles.office]
 name = "公司"
 enabled = true
+ssh_verified = false
 
 [profiles.office.openwrt]
 host = "198.51.100.3"

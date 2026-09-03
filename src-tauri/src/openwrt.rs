@@ -1,4 +1,5 @@
 use crate::{config::Profile, system_info};
+use log::error;
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
@@ -118,7 +119,8 @@ pub fn fetch_inventory(
     profile: &Profile,
     config_dir: &Path,
 ) -> Result<Inventory, String> {
-    let raw = run_ssh(profile_id, profile, config_dir, "uci -q show passwall2")?;
+    let raw = run_ssh(profile_id, profile, config_dir, "uci -q show passwall2")
+        .map_err(user_facing_ssh_error)?;
     parse_inventory(&raw, &profile.device.client_ip, &profile.device.acl_remarks)
 }
 
@@ -136,7 +138,7 @@ pub fn switch_direct(
         format!("passwall2.{}.mode=0", inventory.acl_section),
     ];
     let command = apply_command(&assignments);
-    run_ssh(profile_id, profile, config_dir, &command)?;
+    run_ssh(profile_id, profile, config_dir, &command).map_err(user_facing_ssh_error)?;
 
     let updated = fetch_inventory(profile_id, profile, config_dir)?;
     if !matches!(updated.selection, RouteSelection::Direct) {
@@ -167,7 +169,7 @@ pub fn switch_node(
         format!("passwall2.{}.node={}", inventory.acl_section, node.id),
     ];
     let command = apply_command(&assignments);
-    run_ssh(profile_id, profile, config_dir, &command)?;
+    run_ssh(profile_id, profile, config_dir, &command).map_err(user_facing_ssh_error)?;
 
     let updated = fetch_inventory(profile_id, profile, config_dir)?;
     if !updated.selection.is_node(requested_node_id) {
@@ -327,32 +329,46 @@ fn ensure_expected_client_ip(profile: &Profile) -> Result<(), String> {
 fn classify_ssh_error(error: &str) -> SshStatus {
     let lower = error.to_ascii_lowercase();
     let (kind, message) = if lower.contains("could not resolve hostname") {
-        ("dns", format!("无法解析 OpenWrt 地址：{error}"))
+        ("dns", "无法解析 OpenWrt 地址，请检查地址填写和当前网络".to_string())
+    } else if lower.contains("hostname contains invalid characters")
+        || lower.contains("invalid hostname")
+    {
+        ("invalid_host", "OpenWrt 地址无效或尚未填写完整".to_string())
+    } else if lower.contains("remote host identification has changed") {
+        ("host_key_changed", "SSH 主机指纹发生变化。为防止连接到错误设备，SwitchCat 已拒绝连接".to_string())
     } else if lower.contains("host key verification failed")
         || lower.contains("no ed25519 host key is known")
         || lower.contains("no ecdsa host key is known")
     {
         ("host_key_missing", "尚未确认该环境的 SSH 主机指纹，请按首次配置命令操作".to_string())
-    } else if lower.contains("remote host identification has changed") {
-        ("host_key_changed", "SSH 主机指纹发生变化。为防止连接到错误设备，SwitchCat 已拒绝连接".to_string())
     } else if lower.contains("permission denied") {
         ("auth", "SSH 免密认证失败，请重新安装公钥".to_string())
-    } else if lower.contains("connection timed out")
-        || lower.contains("connection refused")
-        || lower.contains("no route to host")
-        || lower.contains("network is unreachable")
+    } else if lower.contains("connection timed out") || lower.contains("operation timed out") {
+        ("timeout", "连接 OpenWrt 超时，请检查地址、防火墙和网络连通性".to_string())
+    } else if lower.contains("connection refused") {
+        ("refused", "OpenWrt 拒绝了 SSH 连接，请检查 Dropbear 服务和 SSH 端口".to_string())
+    } else if lower.contains("no route to host") || lower.contains("network is unreachable") {
+        ("unreachable", "当前网络无法访问 OpenWrt，请确认所选环境和本机网络".to_string())
+    } else if lower.contains("connection reset")
+        || lower.contains("connection closed")
+        || lower.contains("kex_exchange_identification")
     {
-        ("unreachable", format!("OpenWrt 当前不可达：{error}"))
+        ("disconnected", "SSH 连接在握手过程中断开，请检查 OpenWrt SSH 服务".to_string())
     } else if lower.contains("无法启动 ssh") || lower.contains("no such file or directory") {
         ("ssh_missing", "系统未安装 OpenSSH 客户端".to_string())
     } else {
-        ("ssh_error", format!("SSH 连接失败：{error}"))
+        ("ssh_error", "SSH 操作失败，请检查 OpenWrt 地址、SSH 服务和免密配置".to_string())
     };
     SshStatus {
         ok: false,
         kind: kind.to_string(),
         message,
     }
+}
+
+fn user_facing_ssh_error(error_message: String) -> String {
+    error!("SSH command failed: {error_message}");
+    classify_ssh_error(&error_message).message
 }
 
 fn parse_inventory(raw: &str, client_ip: &str, acl_remarks: &str) -> Result<Inventory, String> {
@@ -624,5 +640,30 @@ passwall2.acl_windows.node='node_jp'
     #[test]
     fn shell_quotes_single_quotes() {
         assert_eq!(sh_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn ssh_errors_are_localized_for_the_ui() {
+        let cases = [
+            (
+                "Permission denied (publickey).",
+                "SSH 免密认证失败，请重新安装公钥",
+            ),
+            (
+                "ssh: connect to host 192.0.2.3 port 22: Connection timed out",
+                "连接 OpenWrt 超时，请检查地址、防火墙和网络连通性",
+            ),
+            (
+                "ssh: connect to host 192.0.2.3 port 22: Connection refused",
+                "OpenWrt 拒绝了 SSH 连接，请检查 Dropbear 服务和 SSH 端口",
+            ),
+        ];
+
+        for (raw, expected) in cases {
+            let status = classify_ssh_error(raw);
+            assert!(!status.ok);
+            assert_eq!(status.message, expected);
+            assert!(!status.message.contains(raw));
+        }
     }
 }

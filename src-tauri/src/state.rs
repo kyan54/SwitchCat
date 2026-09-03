@@ -62,6 +62,14 @@ impl AppState {
             .ok_or_else(|| format!("环境“{profile_id}”不存在或已禁用"))
     }
 
+    pub fn ready_profile(&self, profile_id: &str) -> Result<Profile, String> {
+        let profile = self.profile(profile_id)?;
+        if !profile.ssh_verified {
+            return Err("当前环境尚未完成 SSH 验证，请先在设置中点击“测试 SSH”".to_string());
+        }
+        Ok(profile)
+    }
+
     pub fn active_profile_id(&self) -> Result<String, String> {
         Ok(self.config_snapshot()?.app.active_profile)
     }

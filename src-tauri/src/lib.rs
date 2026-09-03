@@ -115,9 +115,7 @@ fn start_initial_refresh(app: tauri::AppHandle) {
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(400));
         detect_environment(&app);
-        if let Ok(profile_id) = app.state::<AppState>().active_profile_id() {
-            let _ = actions::refresh_profile(&app, &profile_id, false);
-        }
+        refresh_active_profile_if_ready(&app);
     });
 }
 
@@ -131,11 +129,26 @@ fn start_periodic_refresh(app: tauri::AppHandle) {
             .clamp(10, 3600);
         thread::sleep(Duration::from_secs(seconds));
 
-        detect_environment(&app);
-        if let Ok(profile_id) = app.state::<AppState>().active_profile_id() {
-            let _ = actions::refresh_profile(&app, &profile_id, false);
+        if !app.state::<AppState>().config_path.exists() {
+            continue;
         }
+        detect_environment(&app);
+        refresh_active_profile_if_ready(&app);
     });
+}
+
+fn refresh_active_profile_if_ready(app: &tauri::AppHandle) {
+    let state = app.state::<AppState>();
+    if !state.config_path.exists() {
+        return;
+    }
+    let Ok(profile_id) = state.active_profile_id() else {
+        return;
+    };
+    if state.ready_profile(&profile_id).is_err() {
+        return;
+    }
+    let _ = actions::refresh_profile(app, &profile_id, false);
 }
 
 fn detect_environment(app: &tauri::AppHandle) {

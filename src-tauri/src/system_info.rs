@@ -34,7 +34,11 @@ pub fn best_local_ip_for(host: &str, port: u16) -> Option<String> {
 pub fn detect_profile(config: &AppConfig, network: &NetworkSnapshot) -> Option<String> {
     let mut matches: Vec<(i32, String)> = Vec::new();
 
-    for (id, profile) in config.profiles.iter().filter(|(_, profile)| profile.enabled) {
+    for (id, profile) in config
+        .profiles
+        .iter()
+        .filter(|(_, profile)| profile.enabled && profile.ssh_verified)
+    {
         let mut score = 0;
         let mut has_rule = false;
 

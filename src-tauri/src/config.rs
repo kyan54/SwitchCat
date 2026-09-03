@@ -35,6 +35,8 @@ pub struct Profile {
     #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default)]
+    pub ssh_verified: bool,
+    #[serde(default)]
     pub openwrt: OpenWrtSettings,
     #[serde(default)]
     pub device: DeviceSettings,
@@ -96,6 +98,7 @@ impl AppConfig {
             Profile {
                 name: "家里".to_string(),
                 enabled: true,
+                ssh_verified: false,
                 openwrt: OpenWrtSettings::default(),
                 device: DeviceSettings {
                     client_ip: local_ip,
@@ -331,5 +334,28 @@ mod tests {
         assert!(valid_profile_id("home_2"));
         assert!(!valid_profile_id("home/work"));
         assert!(!valid_profile_id("公司"));
+    }
+
+    #[test]
+    fn existing_config_requires_explicit_ssh_verification() {
+        let raw = r#"
+version = 2
+
+[app]
+active_profile = "home"
+
+[profiles.home]
+name = "家里"
+enabled = true
+
+[profiles.home.openwrt]
+host = "192.0.2.3"
+
+[profiles.home.device]
+client_ip = "192.0.2.10"
+"#;
+        let config: AppConfig = toml::from_str(raw).unwrap();
+        assert!(!config.profiles["home"].ssh_verified);
+        assert!(config.validate().is_ok());
     }
 }

@@ -13,6 +13,33 @@ struct StateChanged {
     message: String,
 }
 
+pub fn check_ssh(app: &AppHandle, profile_id: &str) -> Result<openwrt::SshStatus, String> {
+    let state = app.state::<AppState>();
+    let _guard = state
+        .action_lock
+        .lock()
+        .map_err(|_| "操作锁已损坏".to_string())?;
+    if !state.config_path.exists() {
+        return Err("请先保存环境配置，再测试 SSH".to_string());
+    }
+
+    let profile = state.profile(profile_id)?;
+    let status = openwrt::check_ssh(profile_id, &profile, &state.config_dir);
+    let mut current_config = state.config_snapshot()?;
+    let current_profile = current_config
+        .profiles
+        .get_mut(profile_id)
+        .ok_or_else(|| "环境不存在，请重新选择".to_string())?;
+    let verified_changed = current_profile.ssh_verified != status.ok;
+    current_profile.ssh_verified = status.ok;
+    if verified_changed {
+        config::save(&state.config_path, &current_config)?;
+        state.replace_config(current_config)?;
+        schedule_menu_rebuild(app);
+    }
+    Ok(status)
+}
+
 pub fn refresh_profile(app: &AppHandle, profile_id: &str, notify_on_error: bool) -> Result<openwrt::Inventory, String> {
     let state = app.state::<AppState>();
     let _guard = state
@@ -24,7 +51,7 @@ pub fn refresh_profile(app: &AppHandle, profile_id: &str, notify_on_error: bool)
 
 fn refresh_profile_unlocked(app: &AppHandle, profile_id: &str, notify_on_error: bool) -> Result<openwrt::Inventory, String> {
     let state = app.state::<AppState>();
-    let profile = state.profile(profile_id)?;
+    let profile = state.ready_profile(profile_id)?;
     state.set_busy(profile_id, true);
     schedule_menu_rebuild(app);
 
@@ -108,7 +135,7 @@ fn switch_route(
         .action_lock
         .lock()
         .map_err(|_| "操作锁已损坏".to_string())?;
-    let profile = state.profile(profile_id)?;
+    let profile = state.ready_profile(profile_id)?;
     state.set_busy(profile_id, true);
     schedule_menu_rebuild(app);
 
@@ -138,9 +165,18 @@ fn switch_route(
     }
 }
 
-pub fn save_config(app: &AppHandle, new_config: crate::config::AppConfig) -> Result<(), String> {
-    new_config.validate()?;
+pub fn save_config(app: &AppHandle, mut new_config: crate::config::AppConfig) -> Result<(), String> {
     let state = app.state::<AppState>();
+    let previous_config = state.config_snapshot()?;
+    for (profile_id, profile) in &mut new_config.profiles {
+        profile.ssh_verified = previous_config
+            .profiles
+            .get(profile_id)
+            .is_some_and(|previous| {
+                previous.ssh_verified && ssh_context_unchanged(previous, profile)
+            });
+    }
+    new_config.validate()?;
     config::save(&state.config_path, &new_config)?;
     let start_at_login = new_config.app.start_at_login;
     state.replace_config(new_config)?;
@@ -158,6 +194,15 @@ pub fn save_config(app: &AppHandle, new_config: crate::config::AppConfig) -> Res
     emit_change(app, "", "save_config", true, "配置已保存");
     schedule_menu_rebuild(app);
     Ok(())
+}
+
+fn ssh_context_unchanged(previous: &config::Profile, current: &config::Profile) -> bool {
+    previous.openwrt.host == current.openwrt.host
+        && previous.openwrt.port == current.openwrt.port
+        && previous.openwrt.user == current.openwrt.user
+        && previous.openwrt.identity_file == current.openwrt.identity_file
+        && previous.device.client_ip == current.device.client_ip
+        && previous.device.acl_remarks == current.device.acl_remarks
 }
 
 pub fn toggle_autostart(app: &AppHandle) -> Result<bool, String> {
