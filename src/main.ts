@@ -290,27 +290,27 @@ function profileEditor(profileId: string, profile: Profile, isActive: boolean): 
       ${field("OpenWrt 地址", "profile.openwrt.host", profile.openwrt.host, "OpenWrt 的 LAN IPv4 或主机名")}
       ${field("SSH 用户", "profile.openwrt.user", profile.openwrt.user, "通常为 root")}
       ${field("SSH 端口", "profile.openwrt.port", profile.openwrt.port, "22", "number")}
-      ${field("私钥路径（留空自动使用）", "profile.openwrt.identity_file", profile.openwrt.identity_file, defaultKeyHint())}
+      ${field("私钥路径（留空复用系统 SSH）", "profile.openwrt.identity_file", profile.openwrt.identity_file, defaultKeyHint())}
       ${field("本机固定 IPv4", "profile.device.client_ip", profile.device.client_ip, networkIps[0] || "此电脑的固定 IPv4")}
       ${field("ACL 备注（可选兜底）", "profile.device.acl_remarks", profile.device.acl_remarks, "例如 Windows / macbook")}
     </div>
 
     <div class="callout info">
       <strong>网络前提</strong>
-      <span>此环境下，本机网关和 DNS 应固定指向 <code>${h(profile.openwrt.host)}</code>。菜单里的“本地直连”会把对应 ACL 切到 No Proxy，不会反复修改系统网卡。</span>
+      <span>${bootstrap.platform === "windows" ? `Windows 选择代理时会把网关和 DNS 切到 <code>${h(profile.device.proxy_gateway || profile.openwrt.host)}</code>，选择本地直连时切回 <code>${h(profile.device.direct_gateway || "未配置")}</code>；需要以管理员身份运行。` : `本机网关和 DNS 应固定指向 <code>${h(profile.openwrt.host)}</code>，线路切换由 PassWall2 ACL 完成。`}</span>
     </div>
 
     <details class="advanced">
-      <summary>环境自动识别与网络参考</summary>
+      <summary>环境自动识别与网络切换</summary>
       <div class="form-grid two detail-fields">
         ${textareaField("Wi-Fi SSID（每行一个）", "profile.detect.ssids", profile.detect.ssids.join("\n"), "HomeWiFi\nOfficeWiFi")}
         ${textareaField("本地网段 CIDR（每行一个）", "profile.detect.local_cidrs", profile.detect.local_cidrs.join("\n"), "例如：192.0.2.0/24（请替换）")}
         ${textareaField("默认网关（每行一个）", "profile.detect.gateways", profile.detect.gateways.join("\n"), "此环境实际网关")}
         <div class="mini-grid">
-          ${field("本地路由器", "profile.device.direct_gateway", profile.device.direct_gateway, "主路由 LAN IPv4")}
-          ${field("OpenWrt 网关", "profile.device.proxy_gateway", profile.device.proxy_gateway, profile.openwrt.host)}
-          ${field("本地 DNS", "profile.device.direct_dns", profile.device.direct_dns, "本地 DNS IPv4")}
-          ${field("OpenWrt DNS", "profile.device.proxy_dns", profile.device.proxy_dns, profile.openwrt.host)}
+          ${field("本地路由器", "profile.device.direct_gateway", profile.device.direct_gateway, "本地直连时应用")}
+          ${field("OpenWrt 网关", "profile.device.proxy_gateway", profile.device.proxy_gateway, "代理时应用，留空使用 OpenWrt 地址")}
+          ${field("本地 DNS", "profile.device.direct_dns", profile.device.direct_dns, "留空使用本地路由器")}
+          ${field("OpenWrt DNS", "profile.device.proxy_dns", profile.device.proxy_dns, "留空使用 OpenWrt 网关")}
         </div>
       </div>
     </details>
@@ -378,7 +378,7 @@ function toggleSetting(label: string, path: string, value: boolean, description:
 }
 
 function defaultKeyHint(): string {
-  return bootstrap.platform === "windows" ? "%USERPROFILE%\\.ssh\\id_ed25519" : "~/.ssh/id_ed25519";
+  return bootstrap.platform === "windows" ? "留空：使用 Windows OpenSSH 默认配置" : "留空：使用系统 OpenSSH 默认配置";
 }
 
 function emptyState(): string {
@@ -470,19 +470,18 @@ async function showSshGuide(profileId: string): Promise<void> {
   }
   try {
     const instructions = await invoke<SshInstructions>("get_ssh_instructions", { profileId });
-    const profile = draft.profiles[profileId];
     modalRoot.innerHTML = `<div class="modal-backdrop" data-action="close-modal">
       <section class="modal" role="dialog" aria-modal="true" aria-labelledby="ssh-title">
         <button class="modal-close" data-action="close-modal" aria-label="关闭">×</button>
         <span class="kicker">首次只需操作一次</span>
         <h2 id="ssh-title">${h(platformName(instructions.platform))} SSH 免密配置</h2>
-        <p class="modal-lead">为环境“${h(profile?.name)}”创建专用连接。SwitchCat 不保存 OpenWrt 密码；安装公钥时会由系统 SSH 提示输入一次 root 密码。</p>
+        <p class="modal-lead">SwitchCat 会先复用系统 OpenSSH、已有密钥、ssh-agent 和主机信任。若你在终端中已经可以免密连接，请直接点击底部“测试现有 SSH”；只有测试失败时才需要执行下面的配置命令。</p>
         ${sshPrerequisite(instructions.platform)}
         ${commandStep(1, "生成 SSH 密钥", instructions.keygen_command)}
         ${commandStep(2, "把公钥安装到 OpenWrt", instructions.install_command, "首次连接会显示主机指纹，请确认设备地址无误后输入 yes，再输入 OpenWrt root 密码。")}
         ${commandStep(3, "验证免密连接", instructions.verify_command)}
         <div class="ssh-paths"><span>私钥 <code>${h(instructions.identity_file)}</code></span><span>独立主机指纹 <code>${h(instructions.known_hosts_file)}</code></span></div>
-        <div class="modal-actions"><button class="secondary" data-action="close-modal">稍后再做</button><button class="primary" data-action="check-ssh" data-profile-id="${h(profileId)}">我已完成，测试连接</button></div>
+        <div class="modal-actions"><button class="secondary" data-action="close-modal">稍后再做</button><button class="primary" data-action="check-ssh" data-profile-id="${h(profileId)}">测试现有 SSH</button></div>
       </section>
     </div>`;
   } catch (error) {

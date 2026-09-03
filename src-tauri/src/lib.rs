@@ -6,6 +6,8 @@ mod openwrt;
 mod state;
 mod system_info;
 mod tray;
+#[cfg(target_os = "windows")]
+mod windows_network;
 
 use log::{error, info};
 use state::AppState;

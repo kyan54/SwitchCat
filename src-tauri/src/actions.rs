@@ -144,6 +144,15 @@ fn switch_route(
         None => openwrt::switch_direct(profile_id, &profile, &state.config_dir),
     };
 
+    #[cfg(target_os = "windows")]
+    let result = result.and_then(|inventory| {
+        crate::windows_network::apply_route(&profile, node_id.is_some())
+            .map(|_| inventory)
+            .map_err(|error_message| {
+                format!("OpenWrt ACL 已更新，但 Windows 网络切换失败：{error_message}")
+            })
+    });
+
     match result {
         Ok(inventory) => {
             let route_name = inventory.selection.description();

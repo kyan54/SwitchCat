@@ -276,15 +276,28 @@ fn run_ssh(
         .arg("-o")
         .arg("StrictHostKeyChecking=yes")
         .arg("-o")
-        .arg("IdentitiesOnly=yes")
-        .arg("-o")
-        .arg("LogLevel=ERROR")
-        .arg("-o")
-        .arg(format!("UserKnownHostsFile={}", known_hosts.display()));
+        .arg("LogLevel=ERROR");
 
-    let identity = identity_file(profile);
-    if !identity.as_os_str().is_empty() {
-        command.arg("-i").arg(identity);
+    // Reuse the user's normal OpenSSH trust store on the first connection. Once the in-app
+    // guide has created a profile-specific file, keep using it so routers with the same LAN IP
+    // in different environments can still have different host keys.
+    if known_hosts
+        .metadata()
+        .is_ok_and(|metadata| metadata.len() > 0)
+    {
+        command
+            .arg("-o")
+            .arg(format!("UserKnownHostsFile={}", known_hosts.display()));
+    }
+
+    // A blank identity path means "use native OpenSSH defaults": ~/.ssh/config, ssh-agent and
+    // all standard key names. Only pin IdentitiesOnly when the user explicitly chose a key.
+    if !profile.openwrt.identity_file.trim().is_empty() {
+        command
+            .arg("-o")
+            .arg("IdentitiesOnly=yes")
+            .arg("-i")
+            .arg(identity_file(profile));
     }
 
     command

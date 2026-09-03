@@ -19,7 +19,9 @@ SwitchCat 不在电脑上启动代理内核，也不保存 OpenWrt 密码。它�
 - 选择代理节点：将该 ACL 设置为 `mode=1` 并更新 `node`
 - 每次更改后提交 UCI 并重载 PassWall2，然后重新读取配置确认结果
 
-因此建议电脑在每个环境中始终把 IPv4 网关和 DNS 指向对应的 OpenWrt。这样切换线路不需要反复提权修改 Windows/macOS 网卡，也不会与本机 v2rayN、Clash 等系统代理叠加。若使用过其他代理软件，请先关闭其系统代理/PAC。
+Windows 版还会同步修改拥有 `client_ip` 的网卡：选择代理时使用 `proxy_gateway/proxy_dns` 并关闭该网卡 IPv6；选择本地直连时使用 `direct_gateway/direct_dns` 并恢复 IPv6。Windows 版因此需要以管理员身份运行，本机固定 IPv4 保持不变。
+
+macOS/Linux 当前只切换 ACL，建议网关和 DNS 始终指向 OpenWrt。若使用过 v2rayN、Clash 等其他代理软件，请先关闭其系统代理/PAC，避免形成两层代理。
 
 ## 安装
 
@@ -40,7 +42,7 @@ SwitchCat 不在电脑上启动代理内核，也不保存 OpenWrt 密码。它�
 2. 为每台电脑建立一条单独的 ACL，`Source` 使用该电脑固定 IPv4。
 3. ACL 应启用，TCP/UDP 代理端口按照你的 PassWall2 方案设置。
 4. OpenWrt 已启用 Dropbear SSH，电脑能访问其 SSH 端口。
-5. 电脑的 IPv4 网关和 DNS 指向该环境的 OpenWrt。
+5. Windows 环境正确填写本地路由器/OpenWrt 两组网关和 DNS；macOS/Linux 的网关和 DNS 指向 OpenWrt。
 
 SwitchCat 优先按 `client_ip` 精确匹配 ACL；`acl_remarks` 只作为可选兜底。若匹配到多条 ACL，会拒绝切换以避免改错规则。
 
@@ -50,13 +52,13 @@ SwitchCat 优先按 `client_ip` 精确匹配 ACL；`acl_remarks` 只作为可选
 
 1. 填写环境名称、OpenWrt 地址、SSH 用户/端口、本机固定 IPv4。
 2. 保存 `config.toml`。
-3. SwitchCat 会自动弹出当前平台的 SSH 免密引导。
-4. 按顺序复制三段命令：生成密钥、安装公钥、验证连接。
-5. 点击“测试并启用 SSH”，成功后才会读取全部节点，并启动该环境的定时同步。
+3. SwitchCat 会自动弹出当前平台的 SSH 页面；如果系统 SSH 已经免密，直接点击“测试现有 SSH”。
+4. 只有测试失败时，才按顺序复制三段命令：生成密钥、安装公钥、验证连接。
+5. 测试成功后才会读取全部节点，并启动该环境的定时同步。
 
 在 SSH 验证成功之前，该环境的“本地直连”、代理节点、刷新和环境切换均不可操作。修改 OpenWrt 地址、SSH 用户/端口、私钥路径、本机 IP 或 ACL 备注后，验证状态会自动失效，需要重新测试；这可以避免程序在配置尚未完成时连接错误的设备。
 
-SwitchCat 为每个环境维护独立的 `known_hosts` 文件。若路由器主机指纹发生变化，连接会被拒绝；请先确认路由器确实被重装或更换，再删除对应环境的指纹文件并重新确认。
+私钥路径留空时，SwitchCat 优先复用系统 OpenSSH 配置、ssh-agent 和默认密钥，并在尚未创建环境专用指纹时复用系统 `known_hosts`。若通过应用内引导配置，则会为环境维护独立的 `known_hosts`，便于家里和公司使用相同 LAN 地址但不同主机指纹。若指纹发生变化，连接会被拒绝。
 
 ### Windows 手动免密配置
 
