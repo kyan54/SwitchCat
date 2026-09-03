@@ -185,11 +185,28 @@ fn current_ssid() -> Option<String> {
 }
 
 fn command_output(program: &str, arguments: &[&str]) -> Option<String> {
-    let output = Command::new(program).args(arguments).output().ok()?;
+    let output = system_command(program).args(arguments).output().ok()?;
     if !output.status.success() {
         return None;
     }
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn system_command(program: &str) -> Command {
+    use std::os::windows::process::CommandExt;
+
+    // Network discovery runs on startup and at each refresh. Prevent PowerShell/netsh from
+    // briefly creating a console window in the foreground of the desktop application.
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let mut command = Command::new(program);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
+#[cfg(not(target_os = "windows"))]
+fn system_command(program: &str) -> Command {
+    Command::new(program)
 }
 
 fn first_non_empty_line(value: String) -> Option<String> {
