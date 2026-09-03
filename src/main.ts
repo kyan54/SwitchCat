@@ -367,7 +367,7 @@ function textareaField(label: string, path: string, value: string, placeholder =
 }
 
 function toggleSetting(label: string, path: string, value: boolean, description: string): string {
-  return `<label class="setting-row"><span><strong>${h(label)}</strong><small>${h(description)}</small></span><span><input class="sr-only" type="checkbox" data-field="${h(path)}" ${checked(value)}><span class="switch"></span></span></label>`;
+  return `<label class="setting-row"><span class="setting-copy"><strong>${h(label)}</strong><small>${h(description)}</small></span><span class="toggle-control"><input class="toggle-input" type="checkbox" data-field="${h(path)}" aria-label="${h(label)}" ${checked(value)}><span class="switch" aria-hidden="true"></span></span></label>`;
 }
 
 function defaultKeyHint(): string {

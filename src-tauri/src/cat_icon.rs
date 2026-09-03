@@ -14,43 +14,43 @@ pub fn running_cat_frame(phase: usize) -> Vec<u8> {
     }
 
     let phase = phase % FRAME_COUNT;
-    let bob = [1, 0, 0, 1, 2, 1, 0, 0][phase];
+    let bob = [1, 0, 0, 1, 1, 0, 0, 0][phase];
     let leg_a = [1, 2, 3, 2, 0, -1, -2, -1][phase];
     let leg_b = [-2, -1, 0, 2, 3, 2, 1, -1][phase];
 
     // Tail, drawn first so the body naturally overlaps it.
-    let tail_tip_y = 9 + [0, -1, -2, -1, 0, 1, 2, 1][phase];
-    thick_line(&mut canvas, 10, 18 + bob, 5, 14 + bob, 4, OUTLINE);
-    thick_line(&mut canvas, 5, 14 + bob, 3, tail_tip_y, 4, OUTLINE);
-    thick_line(&mut canvas, 10, 18 + bob, 5, 14 + bob, 2, ORANGE);
-    thick_line(&mut canvas, 5, 14 + bob, 3, tail_tip_y, 2, ORANGE);
+    let tail_tip_y = 7 + [0, -1, -2, -1, 0, 1, 2, 1][phase];
+    thick_line(&mut canvas, 11, 18 + bob, 5, 13 + bob, 5, OUTLINE);
+    thick_line(&mut canvas, 5, 13 + bob, 2, tail_tip_y, 5, OUTLINE);
+    thick_line(&mut canvas, 11, 18 + bob, 5, 13 + bob, 3, ORANGE);
+    thick_line(&mut canvas, 5, 13 + bob, 2, tail_tip_y, 3, ORANGE);
 
     // Back and front legs alternate to create a continuous running gait.
-    leg(&mut canvas, 12, 20 + bob, leg_a, false);
+    leg(&mut canvas, 11, 20 + bob, leg_a, false);
     leg(&mut canvas, 19, 20 + bob, leg_b, false);
 
-    ellipse(&mut canvas, 8, 12 + bob, 24, 24 + bob, OUTLINE);
-    ellipse(&mut canvas, 9, 13 + bob, 23, 23 + bob, ORANGE);
-    ellipse(&mut canvas, 11, 17 + bob, 21, 23 + bob, CREAM);
+    ellipse(&mut canvas, 6, 10 + bob, 25, 26 + bob, OUTLINE);
+    ellipse(&mut canvas, 7, 11 + bob, 24, 25 + bob, ORANGE);
+    ellipse(&mut canvas, 10, 16 + bob, 22, 25 + bob, CREAM);
 
     leg(&mut canvas, 14, 20 + bob, leg_b, true);
-    leg(&mut canvas, 22, 19 + bob, leg_a, true);
+    leg(&mut canvas, 23, 19 + bob, leg_a, true);
 
     // Head and ears.
-    triangle(&mut canvas, (20, 12 + bob), (22, 6 + bob), (25, 12 + bob), OUTLINE);
-    triangle(&mut canvas, (25, 11 + bob), (28, 6 + bob), (30, 13 + bob), OUTLINE);
-    triangle(&mut canvas, (22, 11 + bob), (23, 8 + bob), (24, 11 + bob), ORANGE);
-    triangle(&mut canvas, (27, 11 + bob), (28, 8 + bob), (29, 12 + bob), ORANGE);
-    ellipse(&mut canvas, 19, 9 + bob, 30, 20 + bob, OUTLINE);
-    ellipse(&mut canvas, 20, 10 + bob, 29, 19 + bob, ORANGE);
-    ellipse(&mut canvas, 23, 15 + bob, 29, 19 + bob, CREAM);
+    triangle(&mut canvas, (18, 12 + bob), (21, 3 + bob), (25, 12 + bob), OUTLINE);
+    triangle(&mut canvas, (24, 11 + bob), (28, 3 + bob), (31, 13 + bob), OUTLINE);
+    triangle(&mut canvas, (20, 11 + bob), (21, 6 + bob), (23, 11 + bob), ORANGE);
+    triangle(&mut canvas, (26, 11 + bob), (28, 6 + bob), (30, 12 + bob), ORANGE);
+    ellipse(&mut canvas, 17, 7 + bob, 31, 22 + bob, OUTLINE);
+    ellipse(&mut canvas, 18, 8 + bob, 30, 21 + bob, ORANGE);
+    ellipse(&mut canvas, 22, 15 + bob, 30, 21 + bob, CREAM);
 
     // Collar, eye, nose, and two tiny whisker pixels survive at tray size.
-    rect(&mut canvas, 20, 18 + bob, 25, 19 + bob, TEAL);
-    rect(&mut canvas, 25, 12 + bob, 26, 13 + bob, OUTLINE);
-    set_pixel(&mut canvas, 29, 16 + bob, OUTLINE);
-    set_pixel(&mut canvas, 30, 15 + bob, OUTLINE);
-    set_pixel(&mut canvas, 30, 17 + bob, OUTLINE);
+    rect(&mut canvas, 18, 20 + bob, 26, 21 + bob, TEAL);
+    rect(&mut canvas, 25, 11 + bob, 26, 12 + bob, OUTLINE);
+    set_pixel(&mut canvas, 30, 16 + bob, OUTLINE);
+    set_pixel(&mut canvas, 31, 15 + bob, OUTLINE);
+    set_pixel(&mut canvas, 31, 17 + bob, OUTLINE);
 
     canvas
 }
