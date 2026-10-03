@@ -6,6 +6,7 @@ mod openwrt;
 mod state;
 mod system_info;
 mod tray;
+mod timing;
 #[cfg(target_os = "windows")]
 mod windows_network;
 
@@ -100,7 +101,7 @@ pub fn run() {
                 start_initial_refresh(app.handle().clone());
             }
             start_periodic_refresh(app.handle().clone());
-            info!("SwitchCat started");
+            info!("SwitchCat {} started", env!("CARGO_PKG_VERSION"));
             Ok(())
         })
         .on_window_event(|window, event| {

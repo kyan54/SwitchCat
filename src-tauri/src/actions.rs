@@ -130,11 +130,21 @@ fn switch_route(
     profile_id: &str,
     node_id: Option<&str>,
 ) -> Result<openwrt::Inventory, String> {
+    crate::timing::measure(profile_id, "switch_total", || {
+        switch_route_inner(app, profile_id, node_id)
+    })
+}
+
+fn switch_route_inner(
+    app: &AppHandle,
+    profile_id: &str,
+    node_id: Option<&str>,
+) -> Result<openwrt::Inventory, String> {
+    info!("switch requested profile={profile_id} target={}", node_id.unwrap_or("direct"));
     let state = app.state::<AppState>();
-    let _guard = state
-        .action_lock
-        .lock()
-        .map_err(|_| "操作锁已损坏".to_string())?;
+    let _guard = crate::timing::measure(profile_id, "wait_action_lock", || {
+        state.action_lock.lock().map_err(|_| "操作锁已损坏".to_string())
+    })?;
     let profile = state.ready_profile(profile_id)?;
     state.set_busy(profile_id, true);
     schedule_menu_rebuild(app);
@@ -146,7 +156,9 @@ fn switch_route(
 
     #[cfg(target_os = "windows")]
     let result = result.and_then(|inventory| {
-        crate::windows_network::apply_route(&profile, node_id.is_some())
+        crate::timing::measure(profile_id, "windows_network", || {
+            crate::windows_network::apply_route(&profile, node_id.is_some())
+        })
             .map(|_| inventory)
             .map_err(|error_message| {
                 format!("OpenWrt ACL 已更新，但 Windows 网络切换失败：{error_message}")

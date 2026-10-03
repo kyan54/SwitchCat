@@ -159,3 +159,16 @@ cargo test
 ## License
 
 [MIT](LICENSE)
+
+## 切换耗时诊断
+
+从 v0.1.6 起，每次线路切换记录各阶段的 `started` 和 `elapsed_ms`，并用 `ok` 标记成功或失败。同一阶段的开始和结束通过 `span` 对应。
+
+- `switch_total`：从后端收到请求至操作返回的总耗时，包含等待锁及通知。
+- `wait_action_lock`：等待刷新或其他切换完成。
+- `check_client_ip`：检查连接 OpenWrt 使用的本机地址。
+- `ssh_read_before` / `ssh_read_after`：切换前读取及切换后核验，包含 SSH 建连时间。
+- `ssh_apply_and_reload`：SSH 建连、UCI 提交及 PassWall2 重载（失败时回退到 restart）的合计时间。
+- `windows_network`：PowerShell 启动、网关/DNS/IPv6 设置及校验的合计时间。
+
+Windows 日志通常位于 `%LOCALAPPDATA%\com.kyan54.switchcat\logs\SwitchCat.log`。日志时间为 UTC，台北时间需加 8 小时。若只看到某阶段开始而未结束，说明该阶段尚未返回；这些日志用于定位耗时，不会自动终止或重试网络操作。

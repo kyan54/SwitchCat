@@ -129,8 +129,10 @@ pub fn switch_direct(
     profile: &Profile,
     config_dir: &Path,
 ) -> Result<Inventory, String> {
-    ensure_expected_client_ip(profile)?;
-    let inventory = fetch_inventory(profile_id, profile, config_dir)?;
+    crate::timing::measure(profile_id, "check_client_ip", || ensure_expected_client_ip(profile))?;
+    let inventory = crate::timing::measure(profile_id, "ssh_read_before", || {
+        fetch_inventory(profile_id, profile, config_dir)
+    })?;
     validate_uci_section(&inventory.acl_section)?;
 
     let assignments = [
@@ -138,9 +140,13 @@ pub fn switch_direct(
         format!("passwall2.{}.mode=0", inventory.acl_section),
     ];
     let command = apply_command(&assignments);
-    run_ssh(profile_id, profile, config_dir, &command).map_err(user_facing_ssh_error)?;
+    crate::timing::measure(profile_id, "ssh_apply_and_reload", || {
+        run_ssh(profile_id, profile, config_dir, &command).map_err(user_facing_ssh_error)
+    })?;
 
-    let updated = fetch_inventory(profile_id, profile, config_dir)?;
+    let updated = crate::timing::measure(profile_id, "ssh_read_after", || {
+        fetch_inventory(profile_id, profile, config_dir)
+    })?;
     if !matches!(updated.selection, RouteSelection::Direct) {
         return Err("OpenWrt 已执行命令，但 ACL 没有切换到本地直连".to_string());
     }
@@ -153,8 +159,10 @@ pub fn switch_node(
     config_dir: &Path,
     requested_node_id: &str,
 ) -> Result<Inventory, String> {
-    ensure_expected_client_ip(profile)?;
-    let inventory = fetch_inventory(profile_id, profile, config_dir)?;
+    crate::timing::measure(profile_id, "check_client_ip", || ensure_expected_client_ip(profile))?;
+    let inventory = crate::timing::measure(profile_id, "ssh_read_before", || {
+        fetch_inventory(profile_id, profile, config_dir)
+    })?;
     validate_uci_section(&inventory.acl_section)?;
     let node = inventory
         .nodes
@@ -169,9 +177,13 @@ pub fn switch_node(
         format!("passwall2.{}.node={}", inventory.acl_section, node.id),
     ];
     let command = apply_command(&assignments);
-    run_ssh(profile_id, profile, config_dir, &command).map_err(user_facing_ssh_error)?;
+    crate::timing::measure(profile_id, "ssh_apply_and_reload", || {
+        run_ssh(profile_id, profile, config_dir, &command).map_err(user_facing_ssh_error)
+    })?;
 
-    let updated = fetch_inventory(profile_id, profile, config_dir)?;
+    let updated = crate::timing::measure(profile_id, "ssh_read_after", || {
+        fetch_inventory(profile_id, profile, config_dir)
+    })?;
     if !updated.selection.is_node(requested_node_id) {
         return Err("OpenWrt 已执行命令，但 ACL 当前节点与所选节点不一致".to_string());
     }
