@@ -49,6 +49,7 @@ jobs:
           releaseBody: |
             SwitchCat v__VERSION__ — Windows 手动网络切换版。
             配置 IP、掩码、网关、DNS，选择目标网卡后从托盘手动切换。
+            切换完成后弹出 Windows 通知，显示成功结果或失败原因。
             从 0.1.x 升级后，请在新配置页重新保存 config.ini。
           releaseDraft: false
           prerelease: false

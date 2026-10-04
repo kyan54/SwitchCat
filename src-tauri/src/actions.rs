@@ -6,6 +6,7 @@ use crate::{
 };
 use log::{error, info};
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_notification::NotificationExt;
 
 pub fn save_config(
     app: &AppHandle,
@@ -93,13 +94,27 @@ pub fn apply_profile(app: &AppHandle, name: &str) -> Result<(), String> {
     match result {
         Ok(_) => {
             info!("applied manual network profile {name}");
+            notify_result(app, "切换成功", &format!("已切换到：{name}"));
             Ok(())
         }
         Err(message) => {
             error!("applying {name} failed: {message}");
+            notify_result(app, "切换失败", &format!("{name}\n{message}"));
             tray::show_settings(app);
             Err(message)
         }
+    }
+}
+fn notify_result(app: &AppHandle, title: &str, body: &str) {
+    if let Err(error) = app
+        .notification()
+        .builder()
+        .title(format!("SwitchCat · {title}"))
+        .body(body)
+        .show()
+    {
+        // A notification failure must not change the completed network operation's result.
+        log::warn!("could not show switch result notification: {error}");
     }
 }
 fn emit_runtime(app: &AppHandle) {
