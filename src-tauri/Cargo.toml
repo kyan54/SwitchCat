@@ -1,7 +1,7 @@
 [package]
 name = "switchcat"
-version = "0.1.6"
-description = "A tiny cross-platform OpenWrt PassWall2 tray switcher"
+version = "0.2.0"
+description = "A simple Windows network configuration tray switcher"
 authors = ["kyan54"]
 edition = "2021"
 license = "MIT"
@@ -21,13 +21,9 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "~2.12.1", features = ["tray-icon", "image-png"] }
-tauri-plugin-autostart = "2"
 tauri-plugin-log = "2"
-tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
-if-addrs = "0.14"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
-shell-words = "1"
-toml = "0.9"
+serde_json = "1"

@@ -1,361 +1,273 @@
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, net::Ipv4Addr, path::Path};
+use std::{collections::HashSet, fs, net::Ipv4Addr, path::Path};
 
-pub const CONFIG_VERSION: u32 = 2;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppConfig {
-    #[serde(default = "default_version")]
-    pub version: u32,
-    #[serde(default)]
-    pub app: AppSettings,
-    #[serde(default)]
-    pub profiles: BTreeMap<String, Profile>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppSettings {
-    #[serde(default = "default_active_profile")]
-    pub active_profile: String,
-    #[serde(default = "default_true")]
-    pub auto_detect_profile: bool,
-    #[serde(default = "default_refresh_seconds")]
-    pub refresh_seconds: u64,
-    #[serde(default = "default_true")]
-    pub start_at_login: bool,
-    #[serde(default = "default_true")]
-    pub animate_cat: bool,
-    #[serde(default = "default_true")]
-    pub menu_on_left_click: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
     pub name: String,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub ssh_verified: bool,
-    #[serde(default)]
-    pub openwrt: OpenWrtSettings,
-    #[serde(default)]
-    pub device: DeviceSettings,
-    #[serde(default)]
-    pub detect: DetectSettings,
+    pub ip_address: String,
+    pub subnet_mask: String,
+    pub gateway: String,
+    pub dns1: String,
+    pub dns2: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpenWrtSettings {
-    #[serde(default = "default_openwrt_host")]
-    pub host: String,
-    #[serde(default = "default_ssh_port")]
-    pub port: u16,
-    #[serde(default = "default_ssh_user")]
-    pub user: String,
-    #[serde(default)]
-    pub identity_file: String,
-    #[serde(default = "default_connect_timeout")]
-    pub connect_timeout_seconds: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeviceSettings {
-    #[serde(default)]
-    pub client_ip: String,
-    #[serde(default)]
-    pub acl_remarks: String,
-    #[serde(default = "default_direct_gateway")]
-    pub direct_gateway: String,
-    #[serde(default = "default_openwrt_host")]
-    pub proxy_gateway: String,
-    #[serde(default = "default_direct_gateway")]
-    pub direct_dns: String,
-    #[serde(default = "default_openwrt_host")]
-    pub proxy_dns: String,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct DetectSettings {
-    #[serde(default)]
-    pub ssids: Vec<String>,
-    #[serde(default)]
-    pub gateways: Vec<String>,
-    #[serde(default)]
-    pub local_cidrs: Vec<String>,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self::with_local_ip(String::new())
-    }
-}
-
-impl AppConfig {
-    pub fn with_local_ip(local_ip: String) -> Self {
-        let mut profiles = BTreeMap::new();
-        profiles.insert(
-            "home".to_string(),
-            Profile {
-                name: "家里".to_string(),
-                enabled: true,
-                ssh_verified: false,
-                openwrt: OpenWrtSettings::default(),
-                device: DeviceSettings {
-                    client_ip: local_ip,
-                    ..DeviceSettings::default()
-                },
-                detect: DetectSettings {
-                    ..DetectSettings::default()
-                },
-            },
-        );
-
-        Self {
-            version: CONFIG_VERSION,
-            app: AppSettings::default(),
-            profiles,
-        }
+impl Profile {
+    pub fn normalize(&mut self) {
+        self.name = self.name.trim().to_string();
+        self.ip_address = self.ip_address.trim().to_string();
+        self.subnet_mask = self.subnet_mask.trim().to_string();
+        self.gateway = self.gateway.trim().to_string();
+        self.dns1 = self.dns1.trim().to_string();
+        self.dns2 = self.dns2.trim().to_string();
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if self.version != CONFIG_VERSION {
-            return Err(format!(
-                "不支持的配置版本 {}，当前版本需要 {}",
-                self.version, CONFIG_VERSION
-            ));
+        validate_name(&self.name)?;
+        let ip = parse_address(&self.ip_address, "IP地址")?;
+        let gateway = parse_address(&self.gateway, "网关")?;
+        let prefix = mask_prefix(&self.subnet_mask)?;
+        let mask = u32::MAX << (32 - prefix);
+        let network = u32::from(ip) & mask;
+        let broadcast = network | !mask;
+        if u32::from(ip) == network || u32::from(ip) == broadcast {
+            return Err("IP地址不能是子网的网络地址或广播地址".into());
         }
-        if self.profiles.is_empty() {
-            return Err("至少需要配置一个环境".to_string());
-        }
-        if !self.profiles.contains_key(&self.app.active_profile) {
-            return Err("当前环境不存在，请重新选择".to_string());
-        }
-        if !self
-            .profiles
-            .get(&self.app.active_profile)
-            .is_some_and(|profile| profile.enabled)
+        if u32::from(gateway) & mask != network
+            || u32::from(gateway) == network
+            || u32::from(gateway) == broadcast
+            || gateway == ip
         {
-            return Err("当前环境已禁用，请先选择一个启用的环境".to_string());
+            return Err("网关必须是同一子网内的另一台设备地址".into());
         }
-        if !(10..=3600).contains(&self.app.refresh_seconds) {
-            return Err("节点刷新间隔必须在 10 到 3600 秒之间".to_string());
+        if self.dns1.is_empty() && self.dns2.is_empty() {
+            return Err("DNS1 和 DNS2 至少填写一个".into());
         }
-
-        for (id, profile) in &self.profiles {
-            if !valid_profile_id(id) {
-                return Err(format!(
-                    "环境 ID“{id}”无效，只能包含英文、数字、短横线和下划线"
-                ));
-            }
-            if profile.name.trim().is_empty() || profile.name.chars().any(char::is_control) {
-                return Err(format!("环境“{id}”缺少显示名称"));
-            }
-            if !valid_ssh_host(&profile.openwrt.host) {
-                return Err(format!("环境“{}”的 OpenWrt 地址无效", profile.name));
-            }
-            if !valid_ssh_user(&profile.openwrt.user) {
-                return Err(format!("环境“{}”的 SSH 用户无效", profile.name));
-            }
-            if profile.openwrt.port == 0 {
-                return Err(format!("环境“{}”的 SSH 端口无效", profile.name));
-            }
-            if !(2..=30).contains(&profile.openwrt.connect_timeout_seconds) {
-                return Err(format!("环境“{}”的 SSH 超时必须在 2 到 30 秒之间", profile.name));
-            }
-            if profile.openwrt.identity_file.chars().any(char::is_control) {
-                return Err(format!("环境“{}”的私钥路径无效", profile.name));
-            }
-            if profile.device.client_ip.parse::<Ipv4Addr>().is_err() {
-                return Err(format!(
-                    "环境“{}”的本机 IPv4 地址无效：{}",
-                    profile.name, profile.device.client_ip
-                ));
-            }
-            for gateway in &profile.detect.gateways {
-                if gateway.parse::<Ipv4Addr>().is_err() {
-                    return Err(format!("环境“{}”的自动识别网关无效：{gateway}", profile.name));
-                }
-            }
-            for cidr in &profile.detect.local_cidrs {
-                if !valid_ipv4_cidr(cidr) {
-                    return Err(format!("环境“{}”的 CIDR 无效：{cidr}", profile.name));
-                }
+        for (label, value) in [("DNS1", &self.dns1), ("DNS2", &self.dns2)] {
+            if !value.is_empty() {
+                parse_address(value, label)?;
             }
         }
         Ok(())
     }
-}
 
-impl Default for AppSettings {
-    fn default() -> Self {
-        Self {
-            active_profile: default_active_profile(),
-            auto_detect_profile: true,
-            refresh_seconds: default_refresh_seconds(),
-            start_at_login: true,
-            animate_cat: true,
-            menu_on_left_click: true,
+    pub fn dns_servers(&self) -> Vec<String> {
+        let mut servers = Vec::new();
+        for value in [&self.dns1, &self.dns2] {
+            if !value.is_empty() && !servers.contains(value) {
+                servers.push(value.clone());
+            }
         }
+        servers
     }
 }
 
-impl Default for OpenWrtSettings {
-    fn default() -> Self {
-        Self {
-            host: default_openwrt_host(),
-            port: default_ssh_port(),
-            user: default_ssh_user(),
-            identity_file: String::new(),
-            connect_timeout_seconds: default_connect_timeout(),
-        }
+fn validate_name(name: &str) -> Result<(), String> {
+    if name.is_empty()
+        || name.chars().count() > 80
+        || name.chars().any(|c| c.is_control() || c == '[' || c == ']')
+    {
+        return Err("配置名称不能为空，最多 80 个字符，且不能包含方括号或换行".into());
     }
-}
-
-impl Default for DeviceSettings {
-    fn default() -> Self {
-        Self {
-            client_ip: String::new(),
-            acl_remarks: String::new(),
-            direct_gateway: default_direct_gateway(),
-            proxy_gateway: default_openwrt_host(),
-            direct_dns: default_direct_gateway(),
-            proxy_dns: default_openwrt_host(),
-        }
-    }
-}
-
-pub fn load(path: &Path) -> Result<Option<AppConfig>, String> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let raw = fs::read_to_string(path)
-        .map_err(|error| format!("读取配置文件失败（{}）：{error}", path.display()))?;
-    let config: AppConfig =
-        toml::from_str(&raw).map_err(|error| format!("配置文件格式错误：{error}"))?;
-    config.validate()?;
-    Ok(Some(config))
-}
-
-pub fn save(path: &Path, config: &AppConfig) -> Result<(), String> {
-    config.validate()?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| "无法确定配置目录".to_string())?;
-    fs::create_dir_all(parent).map_err(|error| format!("创建配置目录失败：{error}"))?;
-
-    let raw = toml::to_string_pretty(config).map_err(|error| format!("序列化配置失败：{error}"))?;
-    fs::write(path, raw).map_err(|error| format!("保存配置失败：{error}"))?;
     Ok(())
 }
 
-fn valid_profile_id(id: &str) -> bool {
-    !id.is_empty()
-        && id
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+fn parse_address(value: &str, label: &str) -> Result<Ipv4Addr, String> {
+    let ip = value
+        .parse::<Ipv4Addr>()
+        .map_err(|_| format!("{label}不是有效的 IPv4 地址"))?;
+    if ip.is_unspecified()
+        || ip.is_loopback()
+        || ip.is_multicast()
+        || ip.is_broadcast()
+        || ip.octets()[0] == 0
+        || ip.octets()[0] >= 240
+    {
+        return Err(format!("{label}不能使用未指定、环回、组播或保留地址"));
+    }
+    Ok(ip)
 }
 
-fn valid_ssh_host(value: &str) -> bool {
-    !value.is_empty()
-        && !value.starts_with('-')
-        && value
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '-'))
+pub fn mask_prefix(mask: &str) -> Result<u32, String> {
+    let value = u32::from(
+        mask.parse::<Ipv4Addr>()
+            .map_err(|_| "子网掩码不是有效的 IPv4 地址")?,
+    );
+    let prefix = value.leading_ones();
+    if !(1..=30).contains(&prefix) || value != u32::MAX << (32 - prefix) {
+        return Err("子网掩码必须连续，范围为 /1 到 /30（例如 255.255.255.0）".into());
+    }
+    Ok(prefix)
 }
 
-fn valid_ssh_user(value: &str) -> bool {
-    !value.is_empty()
-        && !value.starts_with('-')
-        && value
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+pub fn validate_profiles(profiles: &[Profile]) -> Result<(), String> {
+    if profiles.len() > 100 {
+        return Err("最多保存 100 个配置".into());
+    }
+    let mut names = HashSet::new();
+    for profile in profiles {
+        profile
+            .validate()
+            .map_err(|error| format!("配置“{}”：{error}", profile.name))?;
+        if !names.insert(&profile.name) {
+            return Err(format!("配置名称“{}”重复", profile.name));
+        }
+    }
+    Ok(())
 }
 
-fn valid_ipv4_cidr(value: &str) -> bool {
-    let Some((network, prefix)) = value.split_once('/') else {
-        return false;
-    };
-    network.parse::<Ipv4Addr>().is_ok()
-        && prefix.parse::<u8>().is_ok_and(|prefix| prefix <= 32)
+pub fn parse(raw: &str) -> Result<Vec<Profile>, String> {
+    if raw.len() > 512 * 1024 {
+        return Err("配置文件不能超过 512 KiB".into());
+    }
+    let mut profiles = Vec::<Profile>::new();
+    let mut keys = HashSet::<String>::new();
+    for (index, line) in raw.trim_start_matches('\u{feff}').lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        let fail = |message: &str| format!("第 {} 行：{message}", index + 1);
+        if line.starts_with('[') && line.ends_with(']') {
+            let name = line[1..line.len() - 1].trim().to_string();
+            validate_name(&name).map_err(|error| fail(&error))?;
+            profiles.push(Profile {
+                name,
+                ..Profile::default()
+            });
+            keys.clear();
+            continue;
+        }
+        let profile = profiles
+            .last_mut()
+            .ok_or_else(|| fail("请先写 [配置名称]"))?;
+        let (key, value) = line
+            .split_once('=')
+            .ok_or_else(|| fail("字段格式应为 字段名=值"))?;
+        let key = key.trim();
+        if !keys.insert(key.to_string()) {
+            return Err(fail("同一配置中不能重复填写字段"));
+        }
+        let target = match key {
+            "IP地址" => &mut profile.ip_address,
+            "子网掩码" => &mut profile.subnet_mask,
+            "网关" => &mut profile.gateway,
+            "DNS1" => &mut profile.dns1,
+            "DNS2" => &mut profile.dns2,
+            _ => return Err(fail("未知字段，只支持 IP地址、子网掩码、网关、DNS1、DNS2")),
+        };
+        *target = value.trim().to_string();
+    }
+    validate_profiles(&profiles)?;
+    Ok(profiles)
 }
 
-fn default_version() -> u32 {
-    CONFIG_VERSION
+pub fn load(path: &Path) -> Result<Vec<Profile>, String> {
+    match fs::read_to_string(path) {
+        Ok(raw) => parse(&raw),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(format!("读取配置文件失败：{error}")),
+    }
 }
 
-fn default_true() -> bool {
-    true
+pub fn serialize(profiles: &[Profile]) -> Result<String, String> {
+    validate_profiles(profiles)?;
+    let mut raw = String::new();
+    for profile in profiles {
+        raw.push_str(&format!(
+            "[{}]\nIP地址={}\n子网掩码={}\n网关={}\nDNS1={}\nDNS2={}\n\n",
+            profile.name,
+            profile.ip_address,
+            profile.subnet_mask,
+            profile.gateway,
+            profile.dns1,
+            profile.dns2
+        ));
+    }
+    Ok(raw)
 }
 
-fn default_active_profile() -> String {
-    "home".to_string()
-}
-
-fn default_refresh_seconds() -> u64 {
-    60
-}
-
-fn default_openwrt_host() -> String {
-    String::new()
-}
-
-fn default_direct_gateway() -> String {
-    String::new()
-}
-
-fn default_ssh_port() -> u16 {
-    22
-}
-
-fn default_ssh_user() -> String {
-    "root".to_string()
-}
-
-fn default_connect_timeout() -> u64 {
-    6
+pub fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
+    let temporary = path.with_extension("tmp");
+    fs::write(&temporary, content).map_err(|error| format!("写入配置失败：{error}"))?;
+    fs::rename(&temporary, path).map_err(|error| format!("保存配置失败：{error}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    fn profile() -> Profile {
+        Profile {
+            name: "家里*本地连接".into(),
+            ip_address: "192.168.1.10".into(),
+            subnet_mask: "255.255.255.0".into(),
+            gateway: "192.168.1.1".into(),
+            dns1: "192.168.1.1".into(),
+            dns2: String::new(),
+        }
+    }
     #[test]
-    fn configured_profile_is_valid() {
-        let mut config = AppConfig::with_local_ip("192.0.2.10".to_string());
-        let profile = config.profiles.get_mut("home").unwrap();
-        profile.openwrt.host = "192.0.2.3".to_string();
-        profile.device.proxy_gateway = "192.0.2.3".to_string();
-        profile.device.proxy_dns = "192.0.2.3".to_string();
-        assert!(config.validate().is_ok());
+    fn chinese_ini_roundtrips_and_preserves_order() {
+        let direct = profile();
+        let mut proxy = direct.clone();
+        proxy.name = "家里*代理".into();
+        proxy.gateway = "192.168.1.3".into();
+        proxy.dns1.clear();
+        proxy.dns2 = "192.168.1.3".into();
+        let profiles = vec![direct, proxy];
+        let raw = serialize(&profiles).unwrap();
+        assert_eq!(parse(&raw).unwrap(), profiles);
+        assert_eq!(
+            parse(&format!("\u{feff}; 注释\r\n{}", raw.replace('\n', "\r\n"))).unwrap(),
+            profiles
+        );
+        assert_eq!(profiles[1].dns_servers(), vec!["192.168.1.3"]);
+    }
+    #[test]
+    fn rejects_ambiguous_sections_and_fields() {
+        let raw = serialize(&[profile()]).unwrap();
+        assert!(parse(&(raw.clone() + &raw)).unwrap_err().contains("重复"));
+        assert!(parse(&raw.replace("网关=", "网关=192.168.1.1\n网关=")).is_err());
+        assert!(parse(&raw.replace("DNS2=", "密码=")).is_err());
+        assert!(parse("IP地址=192.168.1.10").is_err());
+    }
+    #[test]
+    fn requires_dns_and_valid_subnet_relationship() {
+        let mut value = profile();
+        value.dns1.clear();
+        assert!(value.validate().unwrap_err().contains("至少"));
+        value.dns2 = "1.1.1.1".into();
+        assert!(value.validate().is_ok());
+        value.gateway = "192.168.2.1".into();
+        assert!(value.validate().is_err());
+        value.gateway = "192.168.1.1".into();
+        value.ip_address = "192.168.1.255".into();
+        assert!(value.validate().is_err());
+        assert_eq!(mask_prefix("255.255.255.0").unwrap(), 24);
+        assert!(mask_prefix("255.0.255.0").is_err());
+        assert!(mask_prefix("0.0.0.0").is_err());
+    }
+    #[test]
+    fn rejects_script_values_and_section_injection() {
+        let mut value = profile();
+        value.ip_address = "192.168.1.10'; Stop-Process".into();
+        assert!(value.validate().is_err());
+        value = profile();
+        value.name = "家里]\n[其他".into();
+        assert!(serialize(&[value]).is_err());
     }
 
     #[test]
-    fn profile_ids_are_restricted() {
-        assert!(valid_profile_id("home_2"));
-        assert!(!valid_profile_id("home/work"));
-        assert!(!valid_profile_id("公司"));
-    }
-
-    #[test]
-    fn existing_config_requires_explicit_ssh_verification() {
-        let raw = r#"
-version = 2
-
-[app]
-active_profile = "home"
-
-[profiles.home]
-name = "家里"
-enabled = true
-
-[profiles.home.openwrt]
-host = "192.0.2.3"
-
-[profiles.home.device]
-client_ip = "192.0.2.10"
-"#;
-        let config: AppConfig = toml::from_str(raw).unwrap();
-        assert!(!config.profiles["home"].ssh_verified);
-        assert!(config.validate().is_ok());
+    fn atomic_write_replaces_existing_ini_with_complete_new_content() {
+        let folder =
+            std::env::temp_dir().join(format!("switchcat-ini-test-{}", std::process::id()));
+        fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("config.ini");
+        fs::write(&path, "old content").unwrap();
+        let raw = serialize(&[profile()]).unwrap();
+        write_atomic(&path, &raw).unwrap();
+        assert_eq!(load(&path).unwrap(), vec![profile()]);
+        assert!(!path.with_extension("tmp").exists());
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&folder).unwrap();
     }
 }
